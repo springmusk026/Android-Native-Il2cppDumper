@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -402,7 +404,7 @@ fun TogglePill(label: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
         ) {
             if (checked) {
                 Icon(
-                    androidx.compose.material.icons.Icons.Default.Check, null,
+                    Icons.Default.Check, null,
                     tint = palette.onAccent, modifier = Modifier.size(10.dp)
                 )
             }
