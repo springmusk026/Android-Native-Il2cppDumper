@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -55,7 +56,7 @@ sealed class DumpState {
     data object Initializing : DumpState()
     data object Searching : DumpState()
     data object Dumping : DumpState()
-    data class Success(val outputDir: String, val jobId: Long) : DumpState()
+    data class Success(val outputDir: String, val jobId: Long, val durationMs: Long) : DumpState()
     data class Error(val message: String) : DumpState()
 }
 
@@ -79,6 +80,19 @@ class DumperViewModel(
     private val _il2cppUri = MutableStateFlow<Uri?>(null)
     val il2cppUri: StateFlow<Uri?> = _il2cppUri.asStateFlow()
 
+    /** Display name and size of a picked file, resolved from the content provider. */
+    data class PickedFile(val name: String, val size: Long)
+
+    private val _metadataFile = MutableStateFlow<PickedFile?>(null)
+    val metadataFile: StateFlow<PickedFile?> = _metadataFile.asStateFlow()
+
+    private val _il2cppFile = MutableStateFlow<PickedFile?>(null)
+    val il2cppFile: StateFlow<PickedFile?> = _il2cppFile.asStateFlow()
+
+    /** Wall-clock start of the running dump, for the elapsed-time readout. */
+    private val _startedAt = MutableStateFlow(0L)
+    val startedAt: StateFlow<Long> = _startedAt.asStateFlow()
+
     private val _isDumpFile = MutableStateFlow(false)
     val isDumpFile: StateFlow<Boolean> = _isDumpFile.asStateFlow()
 
@@ -89,7 +103,7 @@ class DumperViewModel(
 
     private val logCallback = object : NativeDumper.LogCallback {
         override fun onLog(message: String) {
-            _logs.value = _logs.value + message
+            _logs.update { it + message } // called from the native worker thread
         }
     }
 
@@ -99,10 +113,27 @@ class DumperViewModel(
 
     fun setMetadataUri(uri: Uri) {
         _metadataUri.value = uri
+        _metadataFile.value = queryFile(uri)
     }
 
     fun setIl2cppUri(uri: Uri) {
         _il2cppUri.value = uri
+        _il2cppFile.value = queryFile(uri)
+    }
+
+    private fun queryFile(uri: Uri): PickedFile {
+        val context = getApplication<Application>()
+        var name = uri.lastPathSegment ?: "file"
+        var size = -1L
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (nameIndex >= 0) name = cursor.getString(nameIndex) ?: name
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+            }
+        }
+        return PickedFile(name, size)
     }
 
     fun updateConfig(config: DumpConfig) {
@@ -126,6 +157,7 @@ class DumperViewModel(
             _state.value = DumpState.Initializing
 
             val startTime = System.currentTimeMillis()
+            _startedAt.value = startTime
             val context = getApplication<Application>()
 
             // Get file info for the job
@@ -222,7 +254,7 @@ class DumperViewModel(
                         outputFileNames = outputFiles
                     )
                     repository.updateJob(entity)
-                    _state.value = DumpState.Success(jobOutputDir.absolutePath, currentJobId)
+                    _state.value = DumpState.Success(jobOutputDir.absolutePath, currentJobId, duration)
                     addLog("Done! ${outputFiles.size} file(s) in ${duration}ms")
                 } else {
                     failJob("Dump failed", startTime, metaFileName, il2FileName, metaHash, il2Hash, metaFile.length(), il2File.length(), duration)
@@ -270,7 +302,7 @@ class DumperViewModel(
     }
 
     private fun addLog(message: String) {
-        _logs.value = _logs.value + message
+        _logs.update { it + message }
     }
 
     private suspend fun copyUriToFile(uri: Uri, fileName: String): File {

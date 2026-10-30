@@ -3,6 +3,7 @@ package com.il2cpp.dumper.ui.screens
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,66 +12,82 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FolderZip
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.il2cpp.dumper.data.db.DumpJobEntity
-import com.il2cpp.dumper.data.db.JobStatus
-import com.il2cpp.dumper.ui.components.LogViewer
-import com.il2cpp.dumper.ui.theme.DumpGreen
-import com.il2cpp.dumper.ui.theme.DumpRed
-import com.il2cpp.dumper.ui.theme.DumpOrange
+import com.il2cpp.dumper.ui.components.Card
+import com.il2cpp.dumper.ui.components.CircleButton
+import com.il2cpp.dumper.ui.components.Hairline
+import com.il2cpp.dumper.ui.components.Heading
+import com.il2cpp.dumper.ui.components.MonoText
+import com.il2cpp.dumper.ui.components.PrimaryPill
+import com.il2cpp.dumper.ui.components.ScreenHeader
+import com.il2cpp.dumper.ui.components.SecondaryPill
+import com.il2cpp.dumper.ui.components.ValueRow
+import com.il2cpp.dumper.ui.components.entrance
+import com.il2cpp.dumper.ui.components.pressable
+import com.il2cpp.dumper.ui.theme.LocalPalette
+import com.il2cpp.dumper.ui.theme.Space
+import com.il2cpp.dumper.ui.theme.Typo
 import com.il2cpp.dumper.util.DebugInfoCollector
 import com.il2cpp.dumper.viewmodel.DumpConfig
 import com.il2cpp.dumper.viewmodel.JobDetailViewModel
+import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
+private const val REPORT_URL = "https://t.me/+GN7d4fxJAVgxMjg1"
+
 @Composable
 fun JobDetailScreen(
     viewModel: JobDetailViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val palette = LocalPalette.current
     val job by viewModel.job.collectAsState()
     val exportResult by viewModel.exportResult.collectAsState()
     val shareIntent by viewModel.shareIntent.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(exportResult) {
         exportResult?.let {
@@ -78,7 +95,6 @@ fun JobDetailScreen(
             viewModel.clearExportResult()
         }
     }
-
     LaunchedEffect(shareIntent) {
         shareIntent?.let {
             context.startActivity(it)
@@ -86,329 +102,257 @@ fun JobDetailScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            TopAppBar(
-                title = { Text("Job Details") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
+    val jobData = job
+    val state = jobData?.let { jobState(it) }
+
+    Box(modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Space.m),
+            verticalArrangement = Arrangement.spacedBy(Space.s)
+        ) {
+            ScreenHeader(
+                title = jobData?.let { formatTimestamp(it.timestamp) } ?: "Dump",
+                status = when {
+                    jobData == null || state == null -> "Loading"
+                    state == JobState.Succeeded -> "Finished in ${formatSeconds(jobData.durationMs ?: 0)}"
+                    state == JobState.Failed -> "Failed" + (jobData.durationMs?.let { " after ${formatSeconds(it)}" } ?: "")
+                    state == JobState.Interrupted -> "Interrupted: the app was closed during the dump"
+                    else -> "Running"
                 },
-                actions = {
-                    IconButton(onClick = {
-                        viewModel.deleteJob(onBack)
-                    }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete")
-                    }
-                }
-            )
-
-            val jobData = job
-            if (jobData == null) {
-                Text(
-                    text = "Loading...",
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp)
-                )
-                return@Box
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                statusColor = state?.let { jobStateColor(it, palette) } ?: palette.tertiary,
+                live = state == JobState.Running,
+                leading = { CircleButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onBack) },
             ) {
-            // Status banner
-            StatusBanner(jobData)
-
-            // Input Files section
-            SectionCard("Input Files") {
-                InfoRow("Metadata", jobData.metadataFileName)
-                if (jobData.metadataSize > 0) {
-                    InfoRow("Metadata Size", formatFileSize(jobData.metadataSize))
-                }
-                if (jobData.metadataHash != null) {
-                    InfoRow("Metadata SHA-256", jobData.metadataHash.take(16) + "...")
-                }
-                InfoRow("Il2Cpp", jobData.il2cppFileName)
-                if (jobData.il2cppSize > 0) {
-                    InfoRow("Il2Cpp Size", formatFileSize(jobData.il2cppSize))
-                }
-                if (jobData.il2cppHash != null) {
-                    InfoRow("Il2Cpp SHA-256", jobData.il2cppHash.take(16) + "...")
-                }
+                if (jobData != null) CircleButton(Icons.Default.Delete, "Delete job", { confirmDelete = true })
             }
 
-            // Metadata section
-            SectionCard("Metadata") {
-                if (jobData.metadataVersion != null) {
-                    InfoRow("Metadata Version", jobData.metadataVersion.toString())
-                }
-                if (jobData.il2cppVersion != null) {
-                    InfoRow("Il2Cpp Version", jobData.il2cppVersion)
-                }
-                if (jobData.durationMs != null) {
-                    InfoRow("Duration", formatDuration(jobData.durationMs))
-                }
+            if (jobData == null || state == null) return@Column
+
+            when (state) {
+                JobState.Succeeded -> OutputCard(jobData, viewModel, Modifier.entrance(0))
+                JobState.Failed, JobState.Interrupted -> FailureCard(jobData, state, Modifier.entrance(0))
+                JobState.Running -> {}
             }
+            RunCard(jobData, Modifier.entrance(1))
+            OptionsSummaryCard(jobData.configJson, Modifier.entrance(2))
+            if (jobData.logs.isNotEmpty()) CollapsibleLog(jobData.logs, Modifier.entrance(3))
+            Spacer(Modifier.height(Space.xl).navigationBarsPadding())
+        }
 
-            // Configuration section
-            if (jobData.configJson.isNotBlank()) {
-                SectionCard("Configuration") {
-                    val config = parseConfig(jobData.configJson)
-                    config.forEach { (key, value) ->
-                        InfoRow(key, value)
-                    }
-                }
-            }
+        SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+    }
 
-            // Output Files section
-            if (jobData.status == JobStatus.SUCCESS && jobData.outputFileNames.isNotEmpty()) {
-                SectionCard("Output Files") {
-                    jobData.outputFileNames.forEach { fileName ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = fileName,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { viewModel.exportFile(fileName) }) {
-                                Icon(Icons.Default.Download, contentDescription = "Export", modifier = Modifier.padding(4.dp))
-                            }
-                            IconButton(onClick = { viewModel.shareFile(fileName) }) {
-                                Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.padding(4.dp))
-                            }
-                        }
-                    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this dump?") },
+            text = { Text("Its output files and log are removed too.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    viewModel.deleteJob(onBack)
+                }) { Text("Delete", color = palette.critical) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel", color = palette.text) } }
+        )
+    }
+}
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+@Composable
+private fun OutputCard(job: DumpJobEntity, viewModel: JobDetailViewModel, modifier: Modifier) {
+    val palette = LocalPalette.current
+    val files = remember(job.outputDirPath, job.outputFileNames) {
+        job.outputFileNames.map { name -> name to (job.outputDirPath?.let { File(it, name).length() } ?: 0L) }
+    }
+    Card(modifier, glow = palette.accent, padding = Space.m) {
+        Heading("Output") {
+            MonoText("${files.size} file${if (files.size == 1) "" else "s"} · ${formatSize(files.sumOf { it.second })}", color = palette.tertiary)
+        }
+        Column(Modifier.padding(top = Space.xs)) {
+            files.forEachIndexed { i, (name, size) ->
+                if (i > 0) Hairline()
+                Row(Modifier.fillMaxWidth().padding(vertical = Space.xs), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(palette.accent.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Button(
-                            onClick = { viewModel.exportAllAsZip() },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.FolderZip, contentDescription = null)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Export ZIP")
-                        }
-                        OutlinedButton(
-                            onClick = { viewModel.shareAllAsZip() },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = null)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Share ZIP")
-                        }
+                        Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, tint = palette.accent, modifier = Modifier.size(16.dp))
+                    }
+                    Column(Modifier.weight(1f).padding(start = Space.s)) {
+                        Text(name, style = Typo.bodyStrong, color = palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        MonoText(formatSize(size))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+                        CircleButton(Icons.Default.Download, "Save $name to Downloads", { viewModel.exportFile(name) })
+                        CircleButton(Icons.Default.Share, "Share $name", { viewModel.shareFile(name) })
                     }
                 }
-            }
-
-            // Error section
-            if (jobData.status == JobStatus.FAILED && jobData.errorMessage != null) {
-                SectionCard("Error") {
-                    Text(
-                        text = jobData.errorMessage,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = DumpRed
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            val debugInfo = DebugInfoCollector.collect(
-                                metadataFileName = jobData.metadataFileName,
-                                il2cppFileName = jobData.il2cppFileName,
-                                metadataSize = jobData.metadataSize,
-                                il2cppSize = jobData.il2cppSize,
-                                config = parseConfigToDumpConfig(jobData.configJson),
-                                logs = jobData.logs,
-                                metadataVersion = jobData.metadataVersion,
-                                il2cppVersion = jobData.il2cppVersion,
-                                errorMessage = jobData.errorMessage
-                            )
-                            DebugInfoCollector.copyToClipboard(context, debugInfo)
-                        }) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
-                            Text("Copy Debug Info")
-                        }
-                        OutlinedButton(onClick = {
-                            val debugInfo = DebugInfoCollector.collect(
-                                metadataFileName = jobData.metadataFileName,
-                                il2cppFileName = jobData.il2cppFileName,
-                                logs = jobData.logs,
-                                errorMessage = jobData.errorMessage
-                            )
-                            DebugInfoCollector.copyToClipboard(context, debugInfo)
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/+GN7d4fxJAVgxMjg1")))
-                        }) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
-                            Text("Report Error")
-                        }
-                    }
-                }
-            }
-
-            // Logs section
-            if (jobData.logs.isNotEmpty()) {
-                var logsExpanded by remember { mutableStateOf(false) }
-                SectionCard("Logs", expandable = true, expanded = logsExpanded, onToggle = { logsExpanded = !logsExpanded }) {
-                    if (logsExpanded) {
-                        LogViewer(logs = jobData.logs)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
             }
         }
-
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
+        if (files.isEmpty()) {
+            Text("This dump produced no files.", style = Typo.body, color = palette.secondary)
+        } else {
+            Row(Modifier.padding(top = Space.s), horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+                PrimaryPill("Save all as ZIP", Icons.Default.FolderZip, { viewModel.exportAllAsZip() })
+                SecondaryPill("Share ZIP", Icons.Default.Share, { viewModel.shareAllAsZip() })
+            }
+        }
     }
 }
 
 @Composable
-private fun StatusBanner(job: DumpJobEntity) {
-    val (color, text) = when (job.status) {
-        JobStatus.SUCCESS -> DumpGreen to "Completed Successfully"
-        JobStatus.FAILED -> DumpRed to "Failed"
-        JobStatus.RUNNING -> DumpOrange to "Running"
+private fun FailureCard(job: DumpJobEntity, state: JobState, modifier: Modifier) {
+    val palette = LocalPalette.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val detail = job.logs.lastOrNull { it.startsWith("ERROR") }?.removePrefix("ERROR:")?.trim()
+    var copied by remember { mutableStateOf(false) }
+    val debugInfo = {
+        DebugInfoCollector.collect(
+            metadataFileName = job.metadataFileName,
+            il2cppFileName = job.il2cppFileName,
+            metadataSize = job.metadataSize,
+            il2cppSize = job.il2cppSize,
+            config = parseConfigToDumpConfig(job.configJson),
+            logs = job.logs,
+            metadataVersion = job.metadataVersion,
+            il2cppVersion = job.il2cppVersion,
+            errorMessage = job.errorMessage
+        )
     }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.15f))
-    ) {
+    Card(modifier, glow = if (state == JobState.Failed) palette.critical else palette.caution, padding = Space.m) {
         Text(
-            text = text,
-            style = MaterialTheme.typography.titleMedium,
-            color = color,
-            modifier = Modifier.padding(16.dp)
+            if (state == JobState.Failed) job.errorMessage ?: "Failed" else "Interrupted",
+            style = Typo.metric,
+            color = if (state == JobState.Failed) palette.critical else palette.caution
         )
+        if (detail != null && detail != job.errorMessage) {
+            MonoText(detail, color = palette.text, maxLines = 4, modifier = Modifier.padding(top = Space.xxs))
+        }
+        Text(
+            "Reports with debug info (files, options, log) get fixed fastest.",
+            style = Typo.caption,
+            color = palette.secondary,
+            modifier = Modifier.padding(top = Space.xs)
+        )
+        Row(Modifier.padding(top = Space.s), horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+            PrimaryPill(if (copied) "Copied" else "Copy debug info", Icons.Default.ContentCopy, {
+                DebugInfoCollector.copyToClipboard(context, debugInfo())
+                copied = true
+                scope.launch { kotlinx.coroutines.delay(2000); copied = false }
+            }, color = palette.text)
+            SecondaryPill("Report", Icons.AutoMirrored.Filled.OpenInNew, {
+                DebugInfoCollector.copyToClipboard(context, debugInfo())
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(REPORT_URL)))
+            })
+        }
     }
 }
 
 @Composable
-private fun SectionCard(
-    title: String,
-    expandable: Boolean = false,
-    expanded: Boolean = true,
-    onToggle: () -> Unit = {},
-    content: @Composable () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        )
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f)
+private fun RunCard(job: DumpJobEntity, modifier: Modifier) {
+    Card(modifier) {
+        Heading("Run")
+        Column(Modifier.padding(top = Space.xxs)) {
+            job.metadataVersion?.let { ValueRow("Metadata", "v$it", mono = true) }
+            job.il2cppVersion?.takeIf { !it.startsWith("Metadata") && it != "Unknown" }?.let { ValueRow("Il2Cpp", "v$it", mono = true) }
+            job.durationMs?.let { ValueRow("Duration", formatSeconds(it), mono = true) }
+        }
+        Hairline(Modifier.padding(vertical = Space.xs))
+        Heading("Inputs")
+        Column(Modifier.padding(top = Space.xxs)) {
+            InputFile(job.il2cppFileName, job.il2cppSize, job.il2cppHash)
+            InputFile(job.metadataFileName, job.metadataSize, job.metadataHash)
+        }
+    }
+}
+
+@Composable
+private fun InputFile(name: String, size: Long, hash: String?) {
+    val palette = LocalPalette.current
+    Column(Modifier.fillMaxWidth().padding(vertical = Space.xxs)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(name, style = Typo.bodyStrong, color = palette.text, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (size > 0) MonoText(formatSize(size))
+        }
+        if (hash != null) MonoText("sha256 $hash", color = palette.tertiary, maxLines = 2)
+    }
+}
+
+@Composable
+private fun OptionsSummaryCard(configJson: String, modifier: Modifier) {
+    val config = parseConfigToDumpConfig(configJson) ?: return
+    val palette = LocalPalette.current
+    val dumpCs = buildList {
+        if (config.dumpMethod) add("methods")
+        if (config.dumpField) add("fields")
+        if (config.dumpProperty) add("properties")
+        if (config.dumpAttribute) add("attributes")
+        if (config.dumpFieldOffset) add("field offsets")
+        if (config.dumpMethodOffset) add("method offsets")
+        if (config.dumpTypeDefIndex) add("typedef index")
+    }
+    val advanced = buildList {
+        if (config.forceDump) add("force dump mode")
+        if (config.noRedirectedPointer) add("keep dump pointers")
+        if (config.forceIl2CppVersion) add("forced version ${config.forceVersion}")
+    }
+    Card(modifier) {
+        Heading("Options")
+        Column(Modifier.padding(top = Space.xxs)) {
+            ValueRow("dump.cs", dumpCs.joinToString(", ").ifEmpty { "off" }.replaceFirstChar { it.uppercase() })
+            ValueRow("il2cpp.h", if (config.generateStruct) "Generated with script.json" else "Off")
+            if (advanced.isNotEmpty()) {
+                ValueRow("Advanced", advanced.joinToString(", ").replaceFirstChar { it.uppercase() }, valueColor = palette.caution)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollapsibleLog(logs: List<String>, modifier: Modifier) {
+    val palette = LocalPalette.current
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(modifier) {
+        Card(onClick = { expanded = !expanded }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Log", style = Typo.heading, color = palette.secondary)
+                MonoText("${logs.size} lines", color = palette.tertiary, modifier = Modifier.padding(start = Space.xs))
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Hide log" else "Show log",
+                    tint = palette.tertiary,
+                    modifier = Modifier.size(18.dp)
                 )
-                if (expandable) {
-                    IconButton(onClick = onToggle) {
-                        Icon(
-                            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = if (expanded) "Collapse" else "Expand"
-                        )
-                    }
-                }
             }
-            if (!expandable || expanded) {
-                Spacer(modifier = Modifier.height(8.dp))
-                content()
-            }
+        }
+        AnimatedVisibility(expanded) {
+            LogCard(logs, Modifier.padding(top = Space.xs))
         }
     }
 }
 
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp)
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(120.dp)
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodySmall
-        )
-    }
-}
-
-private fun parseConfig(json: String): List<Pair<String, String>> {
-    return try {
-        val obj = JSONObject(json)
-        obj.keys().asSequence().map { key ->
-            key to obj.get(key).toString()
-        }.toList()
-    } catch (_: Exception) {
-        emptyList()
-    }
-}
-
-private fun parseConfigToDumpConfig(json: String): DumpConfig? {
-    return try {
-        val obj = JSONObject(json)
-        DumpConfig(
-            dumpMethod = obj.optBoolean("DumpMethod", true),
-            dumpField = obj.optBoolean("DumpField", true),
-            dumpProperty = obj.optBoolean("DumpProperty", false),
-            dumpAttribute = obj.optBoolean("DumpAttribute", false),
-            dumpFieldOffset = obj.optBoolean("DumpFieldOffset", true),
-            dumpMethodOffset = obj.optBoolean("DumpMethodOffset", true),
-            dumpTypeDefIndex = obj.optBoolean("DumpTypeDefIndex", true),
-            generateStruct = obj.optBoolean("GenerateStruct", true),
-            forceIl2CppVersion = obj.optBoolean("ForceIl2CppVersion", false),
-            forceVersion = obj.optDouble("ForceVersion", 24.3),
-            forceDump = obj.optBoolean("ForceDump", false)
-        )
-    } catch (_: Exception) {
-        null
-    }
-}
-
-private fun formatFileSize(bytes: Long): String {
-    return when {
-        bytes < 1024 -> "$bytes B"
-        bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
-        bytes < 1024 * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
-        else -> "%.2f GB".format(bytes / (1024.0 * 1024 * 1024))
-    }
-}
-
-private fun formatDuration(ms: Long): String {
-    return when {
-        ms < 1000 -> "${ms}ms"
-        ms < 60000 -> "%.1fs".format(ms / 1000.0)
-        else -> "%dm %ds".format(ms / 60000, (ms % 60000) / 1000)
-    }
+private fun parseConfigToDumpConfig(json: String): DumpConfig? = try {
+    val obj = JSONObject(json)
+    DumpConfig(
+        dumpMethod = obj.optBoolean("DumpMethod", true),
+        dumpField = obj.optBoolean("DumpField", true),
+        dumpProperty = obj.optBoolean("DumpProperty", false),
+        dumpAttribute = obj.optBoolean("DumpAttribute", false),
+        dumpFieldOffset = obj.optBoolean("DumpFieldOffset", true),
+        dumpMethodOffset = obj.optBoolean("DumpMethodOffset", true),
+        dumpTypeDefIndex = obj.optBoolean("DumpTypeDefIndex", true),
+        generateStruct = obj.optBoolean("GenerateStruct", true),
+        forceIl2CppVersion = obj.optBoolean("ForceIl2CppVersion", false),
+        forceVersion = obj.optDouble("ForceVersion", 24.3),
+        forceDump = obj.optBoolean("ForceDump", false),
+        noRedirectedPointer = obj.optBoolean("NoRedirectedPointer", false)
+    )
+} catch (_: Exception) {
+    null
 }

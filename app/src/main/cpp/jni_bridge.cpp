@@ -154,7 +154,7 @@ Java_com_il2cpp_dumper_NativeDumper_nativeInit(
             g_il2Cpp = new ElfIl2Cpp(std::move(il2Bytes), isElf64);
             uiLog("ELF loaded: %s (%zu bytes)", isElf64 ? "64-bit" : "32-bit", il2Size);
             if (g_il2Cpp->checkProtection()) {
-                uiLog("⚠️ WARNING: Binary may be protected/obfuscated. Results may be incomplete.");
+                uiLog("WARNING: Binary may be protected or obfuscated; results may be incomplete.");
             }
         } else {
             uiLog("ERROR: Unsupported binary format (magic: 0x%08x)", magic);
