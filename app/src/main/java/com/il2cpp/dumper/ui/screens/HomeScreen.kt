@@ -236,8 +236,8 @@ private fun HeroCard(
             Column {
                 when (key) {
                     "files" -> {
-                        HeroNumber("$filesReady", unit = "/ 2")
-                        Caption("files picked: the game's libil2cpp.so and global-metadata.dat")
+                        HeroNumber("$filesReady", unit = "of 2 files")
+                        Caption("Pick the game's libil2cpp.so and global-metadata.dat below.")
                     }
                     "ready" -> {
                         HeroNumber("Ready")
@@ -367,7 +367,7 @@ private fun FileRow(
         Text(
             if (file != null) "Change" else "Choose",
             style = Typo.caption,
-            color = if (enabled) palette.accent else palette.tertiary,
+            color = if (enabled) palette.secondary else palette.tertiary,
             modifier = Modifier.padding(start = Space.xs)
         )
     }
@@ -419,7 +419,7 @@ private fun AddressRow(isDumpFile: Boolean, enabled: Boolean, onAddress: (Long) 
                         .background(palette.surface)
                         .padding(Space.xs)
                 ) {
-                    if (text.isEmpty()) MonoText("0x7a00000000", color = palette.tertiary)
+                    if (text.isEmpty()) MonoText("optional", color = palette.tertiary)
                     inner()
                 }
             }

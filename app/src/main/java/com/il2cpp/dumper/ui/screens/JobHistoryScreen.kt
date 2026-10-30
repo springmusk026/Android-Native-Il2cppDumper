@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import com.il2cpp.dumper.ui.components.Card
 import com.il2cpp.dumper.ui.components.CircleButton
 import com.il2cpp.dumper.ui.components.MonoText
 import com.il2cpp.dumper.ui.components.ScreenHeader
+import com.il2cpp.dumper.ui.components.SecondaryPill
 import com.il2cpp.dumper.ui.components.StatusDot
 import com.il2cpp.dumper.ui.components.entrance
 import com.il2cpp.dumper.ui.theme.LocalPalette
@@ -52,6 +54,7 @@ import java.util.Locale
 fun JobHistoryScreen(
     viewModel: JobHistoryViewModel,
     onJobClick: (Long) -> Unit,
+    onStartDump: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalPalette.current
@@ -94,6 +97,7 @@ fun JobHistoryScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = Space.xxs)
                     )
+                    SecondaryPill("Start a dump", Icons.Default.Memory, onStartDump, Modifier.padding(top = Space.m))
                 }
             }
         } else {

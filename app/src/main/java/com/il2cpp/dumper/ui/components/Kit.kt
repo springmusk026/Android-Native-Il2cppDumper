@@ -110,7 +110,7 @@ fun Card(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(palette.surface)
+            .background(palette.card)
             .drawBehind {
                 if (glowAlpha > 0f) {
                     val radius = size.maxDimension * 0.75f
@@ -381,8 +381,8 @@ fun Segmented(options: List<Pair<String, ImageVector>>, selected: Int, onSelect:
 @Composable
 fun TogglePill(label: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
     val palette = LocalPalette.current
-    val border by animateColorAsState(if (checked) palette.accent.copy(alpha = 0.55f) else palette.hairline, Motion.quick(), label = "tgBorder")
-    val bg by animateColorAsState(if (checked) palette.accent.copy(alpha = 0.10f) else Color.Transparent, Motion.quick(), label = "tgBg")
+    val border by animateColorAsState(if (checked) palette.text.copy(alpha = 0.22f) else palette.hairline, Motion.quick(), label = "tgBorder")
+    val bg by animateColorAsState(if (checked) palette.text.copy(alpha = 0.06f) else Color.Transparent, Motion.quick(), label = "tgBg")
     val fg = if (checked) palette.text else palette.secondary
     Row(
         Modifier
@@ -398,14 +398,14 @@ fun TogglePill(label: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
             Modifier
                 .size(14.dp)
                 .clip(CircleShape)
-                .border(1.5.dp, if (checked) palette.accent else palette.tertiary, CircleShape)
-                .background(if (checked) palette.accent else Color.Transparent),
+                .border(1.5.dp, if (checked) palette.text else palette.tertiary, CircleShape)
+                .background(if (checked) palette.text else Color.Transparent),
             contentAlignment = Alignment.Center
         ) {
             if (checked) {
                 Icon(
                     Icons.Default.Check, null,
-                    tint = palette.onAccent, modifier = Modifier.size(10.dp)
+                    tint = palette.background, modifier = Modifier.size(10.dp)
                 )
             }
         }

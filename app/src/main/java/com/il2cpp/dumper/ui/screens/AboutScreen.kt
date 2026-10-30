@@ -105,14 +105,15 @@ fun AboutScreen(
             LinkRow(
                 "Report a bug",
                 if (copied) "Device info copied, paste it in the group" else "Copies device info, opens the Telegram group",
-                Icons.AutoMirrored.Filled.OpenInNew
+                Icons.AutoMirrored.Filled.OpenInNew,
+                mono = false
             ) {
                 DebugInfoCollector.copyToClipboard(context, DebugInfoCollector.collect())
                 copied = true
                 open(REPORT_GROUP_URL)
             }
             Hairline(Modifier.padding(horizontal = Space.s))
-            LinkRow("Open-source licenses", "Third-party libraries", Icons.AutoMirrored.Filled.KeyboardArrowRight, onNavigateToLicenses)
+            LinkRow("Open-source licenses", "Third-party libraries", Icons.AutoMirrored.Filled.KeyboardArrowRight, mono = false, onClick = onNavigateToLicenses)
         }
 
         Card(Modifier.entrance(3)) {
@@ -148,7 +149,7 @@ fun AboutScreen(
 }
 
 @Composable
-private fun LinkRow(title: String, subtitle: String, icon: ImageVector, onClick: () -> Unit) {
+private fun LinkRow(title: String, subtitle: String, icon: ImageVector, mono: Boolean = true, onClick: () -> Unit) {
     val palette = LocalPalette.current
     Row(
         Modifier
@@ -159,7 +160,7 @@ private fun LinkRow(title: String, subtitle: String, icon: ImageVector, onClick:
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = Typo.bodyStrong, color = palette.text)
-            MonoText(subtitle)
+            if (mono) MonoText(subtitle) else Text(subtitle, style = Typo.caption, color = palette.secondary)
         }
         Icon(icon, contentDescription = null, tint = palette.tertiary, modifier = Modifier.size(16.dp))
     }

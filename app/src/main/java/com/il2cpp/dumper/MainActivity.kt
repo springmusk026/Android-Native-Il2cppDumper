@@ -125,7 +125,8 @@ fun AppNavigation() {
             composable(Screen.JobHistory.route) {
                 JobHistoryScreen(
                     viewModel = jobHistoryViewModel,
-                    onJobClick = { jobId -> navController.navigate(Screen.JobDetail.createRoute(jobId)) }
+                    onJobClick = { jobId -> navController.navigate(Screen.JobDetail.createRoute(jobId)) },
+                    onStartDump = { selectTab(0) }
                 )
             }
 
