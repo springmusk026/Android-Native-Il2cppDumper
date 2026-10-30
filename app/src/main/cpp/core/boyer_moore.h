@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -46,66 +47,52 @@ public:
         if (!source || sourceLen == 0 || stringPattern.empty())
             return results;
 
-        // Parse pattern string
-        std::vector<std::string> pattern;
+        // Parse once: -1 marks a wildcard.
+        std::vector<int> pattern;
         std::string token;
+        auto flush = [&]() {
+            if (token.empty()) return;
+            pattern.push_back(token == "?" ? -1 : static_cast<int>(std::stoul(token, nullptr, 16) & 0xFF));
+            token.clear();
+        };
         for (char c : stringPattern) {
-            if (c == ' ') {
-                if (!token.empty()) {
-                    pattern.push_back(token);
-                    token.clear();
-                }
-            } else {
-                token += c;
-            }
+            if (c == ' ') flush();
+            else token += c;
         }
-        if (!token.empty())
-            pattern.push_back(token);
+        flush();
 
         size_t patternLen = pattern.size();
         if (patternLen == 0 || patternLen > sourceLen)
             return results;
 
+        auto lastPatternByte = static_cast<int>(patternLen - 1);
+        // A wildcard matches any byte, so no shift may jump past the last
+        // wildcard before the final position.
+        int maxShift = static_cast<int>(patternLen);
+        for (int i = 0; i < lastPatternByte; i++) {
+            if (pattern[i] < 0) maxShift = lastPatternByte - i;
+        }
         int badCharacters[256];
         for (int i = 0; i < 256; i++)
-            badCharacters[i] = static_cast<int>(patternLen);
-
-        auto lastPatternByte = static_cast<int>(patternLen - 1);
+            badCharacters[i] = maxShift;
+        // In-order assignment lets later occurrences win (smallest shift).
         for (int i = 0; i < lastPatternByte; i++) {
-            if (pattern[i] != "?") {
-                int val = std::stoi(pattern[i], nullptr, 16);
-                badCharacters[val] = lastPatternByte - i;
-            }
+            if (pattern[i] >= 0) badCharacters[pattern[i]] = std::min(maxShift, lastPatternByte - i);
         }
 
         size_t index = 0;
         while (index <= sourceLen - patternLen) {
             int i = lastPatternByte;
-            while (checkEqual(source, pattern, index, i)) {
+            while (pattern[i] < 0 || source[index + i] == pattern[i]) {
                 if (i == 0) {
                     results.push_back(static_cast<int>(index));
                     break;
                 }
                 i--;
             }
-            if (pattern[lastPatternByte] != "?") {
-                int val = std::stoi(pattern[lastPatternByte], nullptr, 16);
-                index += badCharacters[val];
-            } else {
-                index += 1;
-            }
+            index += badCharacters[source[index + lastPatternByte]];
         }
         return results;
-    }
-
-private:
-    static bool checkEqual(const uint8_t* source, const std::vector<std::string>& pattern,
-                           size_t index, int i) {
-        if (pattern[i] != "?") {
-            int val = std::stoi(pattern[i], nullptr, 16);
-            return source[index + i] == static_cast<uint8_t>(val);
-        }
-        return true;
     }
 };
 

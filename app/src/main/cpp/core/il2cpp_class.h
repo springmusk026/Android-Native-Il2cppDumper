@@ -160,6 +160,21 @@ struct Il2CppMethodSpec {
         classIndexIndex = stream.readInt32();
         methodIndexIndex = stream.readInt32();
     }
+
+    bool operator==(const Il2CppMethodSpec& o) const {
+        return methodDefinitionIndex == o.methodDefinitionIndex &&
+               classIndexIndex == o.classIndexIndex &&
+               methodIndexIndex == o.methodIndexIndex;
+    }
+};
+
+struct Il2CppMethodSpecHash {
+    size_t operator()(const Il2CppMethodSpec& m) const {
+        uint64_t h = static_cast<uint32_t>(m.methodDefinitionIndex);
+        h = h * 0x9E3779B97F4A7C15ull ^ static_cast<uint32_t>(m.classIndexIndex);
+        h = h * 0x9E3779B97F4A7C15ull ^ static_cast<uint32_t>(m.methodIndexIndex);
+        return static_cast<size_t>(h ^ (h >> 32));
+    }
 };
 
 struct Il2CppCodeGenModule {

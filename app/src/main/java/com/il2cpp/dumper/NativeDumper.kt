@@ -16,6 +16,7 @@ object NativeDumper {
     external fun nativeSearch(): Boolean
     external fun nativeDump(outputDir: String, configJson: String): Boolean
     external fun nativeGetVersion(): String
+    external fun nativeGetIl2CppVersion(): String
     external fun nativeIsDumpFile(): Boolean
     external fun nativeSetDumpAddress(address: Long)
     external fun nativeCancel()

@@ -1,5 +1,41 @@
 # Changelog
 
+## [Unreleased]
+
+Logic fixes from a line-by-line comparison with upstream Perfare/Il2CppDumper.
+
+### Search / initialization
+- **Pattern search and symbol search now initialize the engine** — both reported success without ever calling `init()`, so dumps ran on empty type tables
+- **Pattern search no longer discards its result** — it re-ran PlusSearch instead of using the registrations it found; the ARM LDR check also tested the wrong bit
+- **Dump files work** — the dump address never reached the ELF parser (no segment/dynamic fix-up, wrong RVAs); it is now applied before search and honors *No Redirected Pointer*
+- **Force Il2Cpp Version no longer corrupts metadata** — it overwrote the metadata parser's version after parsing; it now only applies to the binary, like upstream
+- **Version 27.1 → 27.2 detection implemented** (was a stub); RGCTX entries are read with the correct pointer-sized layout for 27.2+ and on 32-bit
+- **Generic method pointers keyed correctly** — the XOR hash collided once method indices exceeded 65535, attaching wrong addresses to generic instances
+- **mapVATR throws for unmapped addresses** (as upstream) instead of silently reading file offset 0
+
+### ELF parsing
+- **DT_GNU_HASH parsing fixed** — wrong bloom word size on 64-bit and bucket count read from the wrong offset, losing the symbol table on most arm64 binaries
+- **R_AARCH64_ABS64 / R_X86_64_64 relocations applied**; 32-bit relocation loop no longer drifts after each write
+- **Protection check** now also detects `JNI_OnLoad` and `SHT_LOUSER` sections
+- Wildcard Boyer-Moore search uses the correct skip table
+
+### dump.cs
+- **Field and parameter default values** (constants, enum values) are printed — previously a stub that always failed
+- **v29+ custom attributes decoded** — the reader parsed the wrong blob layout and printed `[CustomAttribute]` placeholders
+- `out` / `ref` / `in` / `[In]` / `[Out]` parameter modifiers, setter-only properties, `[Serializable]`, and `GenericInstMethod` blocks
+- Custom attribute lookup used `assemblyIndex` instead of the image index
+- Output format (spacing, uppercase hex, no BOM) matches upstream; a broken type no longer leaves a half-written declaration
+
+### script.json / il2cpp.h / stringliteral.json
+- `struct_generator.cpp` re-ported from upstream: generic class structs, `_array` structs, generic-parameter/pointer types, `MethodInfo_*` structs with RGCTX, type signatures, metadata usages for v27+ (previously none) and FieldInfo/MethodAddress entries for v17–26
+- `header_constants.h` restored from upstream (was a placeholder); the il2cpp.h header is chosen with upstream's exact version list
+- JSON output matches System.Text.Json (indentation, escaping, `null` signatures); stringliteral.json no longer lists every literal at `0x0`
+
+### Robustness
+- Array reads reject impossible counts instead of attempting multi-GB allocations; metadata/type indices are bounds-checked so corrupt input fails with an error instead of crashing
+- Native calls are serialized so cleanup cannot free state under a running dump
+- Dump addresses ≥ 0x8000000000000000 are parsed correctly; the job history records the detected Il2Cpp version
+
 ## [1.1.0] - 2026-06-04
 
 ### Critical Fixes

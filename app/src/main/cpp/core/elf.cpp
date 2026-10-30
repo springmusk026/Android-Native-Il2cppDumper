@@ -2,6 +2,8 @@
 #include "section_helper.h"
 #include "boyer_moore.h"
 #include <algorithm>
+#include <cstdio>
+#include <stdexcept>
 #include <android/log.h>
 
 #define LOG_TAG "Il2CppDumper"
@@ -30,6 +32,12 @@ void Elf::load() {
     setPosition(4); // e_class offset
     auto elfClass = readByte();
     is64Bit = (elfClass == 2);
+    pt_dynamic32 = nullptr;
+    pt_dynamic64 = nullptr;
+    dynamicSection32.clear();
+    dynamicSection64.clear();
+    symbolTable32.clear();
+    symbolTable64.clear();
 
     if (is64Bit) {
         is32Bit = false;
@@ -233,7 +241,9 @@ uint64_t Elf::mapVATR(uint64_t addr) {
             }
         }
     }
-    return 0;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "mapVATR: address 0x%llx not mapped", (unsigned long long)addr);
+    throw std::out_of_range(msg);
 }
 
 uint64_t Elf::mapRTVA(uint64_t addr) {
@@ -253,9 +263,9 @@ uint64_t Elf::mapRTVA(uint64_t addr) {
     return 0;
 }
 
-bool Elf::search() {
-    // ARM feature bytes search for 32-bit ELF
-    if (is64Bit) return false;
+bool Elf::search(uint64_t& codeRegistrationOut, uint64_t& metadataRegistrationOut) {
+    // ARM feature bytes search, only implemented for 32-bit ARM (as upstream).
+    if (is64Bit || elf32Header.e_machine != ElfConstants::EM_ARM) return false;
 
     uint32_t GOT = 0;
     for (auto& dyn : dynamicSection32) {
@@ -265,98 +275,94 @@ bool Elf::search() {
         }
     }
 
-    std::vector<uint32_t> execOffsets;
+    std::vector<uint32_t> resultList;
     for (auto& phdr : programSegment32) {
         if (phdr.p_type == ElfConstants::PT_LOAD && (phdr.p_flags & ElfConstants::PF_X)) {
             setPosition(phdr.p_offset);
             auto buff = readBytes(static_cast<int>(phdr.p_filesz));
-            auto results = BoyerMooreHorspool::search(buff.data(), buff.size(), ARMFeatureBytes);
-            for (auto r : results) {
-                if ((buff[r + 2] & 0x0F) == 0x01) { // LDR
-                    execOffsets.push_back(static_cast<uint32_t>(r));
+            for (auto r : BoyerMooreHorspool::search(buff.data(), buff.size(), ARMFeatureBytes)) {
+                // Bit 20 of the first instruction (L bit, bit 4 of byte 2) marks LDR.
+                if (buff[r + 2] & 0x10) {
+                    resultList.push_back(static_cast<uint32_t>(r));
                 }
             }
         }
     }
 
-    if (execOffsets.size() == 1) {
-        uint32_t codeRegistration = 0;
-        uint32_t metadataRegistration = 0;
-        auto result = execOffsets[0];
+    if (resultList.size() != 1) return false;
 
-        if (version >= 24) {
-            setPosition(result + 0x14);
-            codeRegistration = readUInt32() + result + 0xcu + static_cast<uint32_t>(imageBase);
-            setPosition(result + 0x10);
-            auto ptr = readUInt32() + result + 0x8;
-            setPosition(mapVATR(ptr + imageBase));
-            metadataRegistration = readUInt32();
-        } else {
-            setPosition(result + 0x14);
-            codeRegistration = readUInt32() + GOT;
-            setPosition(result + 0x18);
-            auto ptr = readUInt32() + GOT;
-            setPosition(mapVATR(ptr));
-            metadataRegistration = readUInt32();
-        }
-
-        LOGI("CodeRegistration : %x", codeRegistration);
-        LOGI("MetadataRegistration : %x", metadataRegistration);
-        // init(codeRegistration, metadataRegistration) will be called from Il2Cpp engine
-        return true;
+    uint32_t codeRegistration = 0;
+    uint32_t metadataRegistration = 0;
+    auto result = resultList[0];
+    if (version < 24) {
+        setPosition(result + 0x14);
+        codeRegistration = readUInt32() + GOT;
+        setPosition(result + 0x18);
+        auto ptr = readUInt32() + GOT;
+        setPosition(mapVATR(ptr));
+        metadataRegistration = readUInt32();
+    } else {
+        setPosition(result + 0x14);
+        codeRegistration = readUInt32() + result + 0xcu + static_cast<uint32_t>(imageBase);
+        setPosition(result + 0x10);
+        auto ptr = readUInt32() + result + 0x8;
+        setPosition(mapVATR(ptr + imageBase));
+        metadataRegistration = readUInt32();
     }
-    return false;
+
+    LOGI("CodeRegistration : %x", codeRegistration);
+    LOGI("MetadataRegistration : %x", metadataRegistration);
+    codeRegistrationOut = codeRegistration;
+    metadataRegistrationOut = metadataRegistration;
+    return true;
 }
 
-bool Elf::plusSearch(int methodCount, int typeDefinitionsCount, int imageCount) {
-    auto* helper = getSectionHelper(methodCount, typeDefinitionsCount, imageCount, storedMetadataUsagesCount);
-    auto codeRegistration = helper->findCodeRegistration();
-    auto metadataRegistration = helper->findMetadataRegistration();
-    delete helper;
-    // autoPlusInit will be called from Il2Cpp engine
-    return codeRegistration != 0 && metadataRegistration != 0;
-}
-
-bool Elf::symbolSearch() {
+bool Elf::symbolSearch(uint64_t& codeRegistrationOut, uint64_t& metadataRegistrationOut) {
     uint64_t codeRegistration = 0;
     uint64_t metadataRegistration = 0;
+    bool hasStrtab = false;
+    auto strtab = findDynamic(ElfConstants::DT_STRTAB, hasStrtab);
+    if (!hasStrtab) {
+        LOGI("ERROR: No symbol is detected");
+        return false;
+    }
+    uint64_t dynstrOffset = mapVATR(strtab);
 
+    auto visit = [&](uint32_t nameOffset, uint64_t value) {
+        auto name = readStringToNull(dynstrOffset + nameOffset);
+        if (name == "g_CodeRegistration") codeRegistration = value;
+        else if (name == "g_MetadataRegistration") metadataRegistration = value;
+    };
     if (is64Bit) {
-        uint64_t dynstrOffset = 0;
-        for (auto& dyn : dynamicSection64) {
-            if (dyn.d_tag == ElfConstants::DT_STRTAB) {
-                dynstrOffset = mapVATR(dyn.d_un);
-                break;
-            }
-        }
-        for (auto& sym : symbolTable64) {
-            auto name = readStringToNull(dynstrOffset + sym.st_name);
-            if (name == "g_CodeRegistration") codeRegistration = sym.st_value;
-            else if (name == "g_MetadataRegistration") metadataRegistration = sym.st_value;
-        }
+        for (auto& sym : symbolTable64) visit(sym.st_name, sym.st_value);
     } else {
-        uint32_t dynstrOffset = 0;
-        for (auto& dyn : dynamicSection32) {
-            if (dyn.d_tag == ElfConstants::DT_STRTAB) {
-                dynstrOffset = static_cast<uint32_t>(mapVATR(dyn.d_un));
-                break;
-            }
-        }
-        for (auto& sym : symbolTable32) {
-            auto name = readStringToNull(dynstrOffset + sym.st_name);
-            if (name == "g_CodeRegistration") codeRegistration = sym.st_value;
-            else if (name == "g_MetadataRegistration") metadataRegistration = sym.st_value;
-        }
+        for (auto& sym : symbolTable32) visit(sym.st_name, sym.st_value);
     }
 
     if (codeRegistration > 0 && metadataRegistration > 0) {
         LOGI("Detected Symbol!");
         LOGI("CodeRegistration : %llx", (unsigned long long)codeRegistration);
         LOGI("MetadataRegistration : %llx", (unsigned long long)metadataRegistration);
+        codeRegistrationOut = codeRegistration;
+        metadataRegistrationOut = metadataRegistration;
         return true;
     }
     LOGI("ERROR: No symbol is detected");
     return false;
+}
+
+uint64_t Elf::findDynamic(int64_t tag, bool& found) const {
+    found = false;
+    if (is64Bit) {
+        for (auto& dyn : dynamicSection64) {
+            if (dyn.d_tag == tag) { found = true; return dyn.d_un; }
+        }
+    } else {
+        for (auto& dyn : dynamicSection32) {
+            if (dyn.d_tag == tag) { found = true; return dyn.d_un; }
+        }
+    }
+    return 0;
 }
 
 SectionHelper* Elf::getSectionHelper(int methodCount, int typeDefinitionsCount, int imageCount, int64_t metadataUsagesCount) {
@@ -413,118 +419,65 @@ uint64_t Elf::getRVA(uint64_t pointer) {
 void Elf::readSymbol() {
     try {
         uint64_t symbolCount = 0;
-
-        if (is64Bit) {
-            // Try DT_HASH first, then DT_GNU_HASH
-            auto hashIt = std::find_if(dynamicSection64.begin(), dynamicSection64.end(),
-                [](const Elf64_Dyn& d) { return d.d_tag == ElfConstants::DT_HASH; });
-            if (hashIt != dynamicSection64.end()) {
-                auto addr = mapVATR(hashIt->d_un);
-                setPosition(addr);
-                readUInt32(); // nbucket
-                symbolCount = readUInt32(); // nchain
+        bool found = false;
+        auto hash = findDynamic(ElfConstants::DT_HASH, found);
+        if (found) {
+            setPosition(mapVATR(hash));
+            readUInt32(); // nbucket
+            symbolCount = readUInt32(); // nchain
+        } else {
+            auto gnuHash = findDynamic(ElfConstants::DT_GNU_HASH, found);
+            if (!found) return;
+            auto addr = mapVATR(gnuHash);
+            setPosition(addr);
+            auto nbuckets = readUInt32();
+            auto symoffset = readUInt32();
+            auto bloom_size = readUInt32();
+            readUInt32(); // bloom_shift
+            // Bloom filter words are ELFCLASS-sized: 8 bytes on 64-bit, 4 on 32-bit.
+            auto buckets_address = addr + 16 + (is64Bit ? 8ull : 4ull) * bloom_size;
+            auto buckets = readPrimitiveArray<uint32_t>(buckets_address, nbuckets);
+            if (buckets.empty()) return;
+            uint64_t last_symbol = *std::max_element(buckets.begin(), buckets.end());
+            if (last_symbol < symoffset) {
+                symbolCount = symoffset;
             } else {
-                hashIt = std::find_if(dynamicSection64.begin(), dynamicSection64.end(),
-                    [](const Elf64_Dyn& d) { return d.d_tag == static_cast<int64_t>(ElfConstants::DT_GNU_HASH); });
-                if (hashIt != dynamicSection64.end()) {
-                    auto addr = mapVATR(hashIt->d_un);
-                    setPosition(addr);
-                    readUInt32(); // nbuckets
-                    auto symoffset = readUInt32();
-                    auto bloom_size = readUInt32();
-                    readUInt32(); // bloom_shift
-                    auto buckets_address = addr + 16 + (4 * bloom_size);
-                    auto buckets = readPrimitiveArray<uint32_t>(buckets_address, readUInt32());
-                    auto last_symbol = *std::max_element(buckets.begin(), buckets.end());
-                    if (last_symbol < symoffset) {
-                        symbolCount = symoffset;
-                    } else {
-                        auto chains_base = buckets_address + 4 * buckets.size();
-                        setPosition(chains_base + (last_symbol - symoffset) * 4);
-                        while (true) {
-                            auto chain_entry = readUInt32();
-                            ++last_symbol;
-                            if ((chain_entry & 1) != 0) break;
-                        }
-                        symbolCount = last_symbol;
-                    }
+                auto chains_base_address = buckets_address + 4ull * nbuckets;
+                setPosition(chains_base_address + (last_symbol - symoffset) * 4);
+                while (getPosition() + 4 <= getLength()) {
+                    auto chain_entry = readUInt32();
+                    ++last_symbol;
+                    if ((chain_entry & 1) != 0) break;
                 }
+                symbolCount = last_symbol;
             }
+        }
 
-            uint64_t dynsymOffset = 0;
-            for (auto& dyn : dynamicSection64) {
-                if (dyn.d_tag == ElfConstants::DT_SYMTAB) {
-                    dynsymOffset = mapVATR(dyn.d_un);
-                    break;
-                }
-            }
-            if (dynsymOffset && symbolCount) {
-                setPosition(dynsymOffset);
-                symbolTable64.resize(symbolCount);
-                for (size_t i = 0; i < symbolCount; i++) {
-                    symbolTable64[i].st_name = readUInt32();
-                    symbolTable64[i].st_info = readByte();
-                    symbolTable64[i].st_other = readByte();
-                    symbolTable64[i].st_shndx = readUInt16();
-                    symbolTable64[i].st_value = readUInt64();
-                    symbolTable64[i].st_size = readUInt64();
-                }
+        auto symtab = findDynamic(ElfConstants::DT_SYMTAB, found);
+        if (!found || symbolCount == 0) return;
+        auto dynsymOffset = mapVATR(symtab);
+        setPosition(dynsymOffset);
+        if (is64Bit) {
+            checkCount(static_cast<int64_t>(symbolCount), 24);
+            symbolTable64.resize(symbolCount);
+            for (auto& sym : symbolTable64) {
+                sym.st_name = readUInt32();
+                sym.st_info = readByte();
+                sym.st_other = readByte();
+                sym.st_shndx = readUInt16();
+                sym.st_value = readUInt64();
+                sym.st_size = readUInt64();
             }
         } else {
-            // 32-bit
-            auto hashIt = std::find_if(dynamicSection32.begin(), dynamicSection32.end(),
-                [](const Elf32_Dyn& d) { return d.d_tag == ElfConstants::DT_HASH; });
-            if (hashIt != dynamicSection32.end()) {
-                auto addr = mapVATR(hashIt->d_un);
-                setPosition(addr);
-                readUInt32(); // nbucket
-                symbolCount = readUInt32(); // nchain
-            } else {
-                hashIt = std::find_if(dynamicSection32.begin(), dynamicSection32.end(),
-                    [](const Elf32_Dyn& d) { return d.d_tag == static_cast<int32_t>(ElfConstants::DT_GNU_HASH); });
-                if (hashIt != dynamicSection32.end()) {
-                    auto addr = mapVATR(hashIt->d_un);
-                    setPosition(addr);
-                    readUInt32(); // nbuckets
-                    auto symoffset = readUInt32();
-                    auto bloom_size = readUInt32();
-                    readUInt32(); // bloom_shift
-                    auto buckets_address = addr + 16 + (4 * bloom_size);
-                    auto buckets = readPrimitiveArray<uint32_t>(buckets_address, readUInt32());
-                    auto last_symbol = *std::max_element(buckets.begin(), buckets.end());
-                    if (last_symbol < symoffset) {
-                        symbolCount = symoffset;
-                    } else {
-                        auto chains_base = buckets_address + 4 * buckets.size();
-                        setPosition(chains_base + (last_symbol - symoffset) * 4);
-                        while (true) {
-                            auto chain_entry = readUInt32();
-                            ++last_symbol;
-                            if ((chain_entry & 1) != 0) break;
-                        }
-                        symbolCount = last_symbol;
-                    }
-                }
-            }
-
-            uint32_t dynsymOffset = 0;
-            for (auto& dyn : dynamicSection32) {
-                if (dyn.d_tag == ElfConstants::DT_SYMTAB) {
-                    dynsymOffset = static_cast<uint32_t>(mapVATR(dyn.d_un));
-                    break;
-                }
-            }
-            if (dynsymOffset && symbolCount) {
-                setPosition(dynsymOffset);
-                symbolTable32.resize(symbolCount);
-                for (size_t i = 0; i < symbolCount; i++) {
-                    symbolTable32[i].st_name = readUInt32();
-                    symbolTable32[i].st_value = readUInt32();
-                    symbolTable32[i].st_size = readUInt32();
-                    symbolTable32[i].st_info = readByte();
-                    symbolTable32[i].st_other = readByte();
-                    symbolTable32[i].st_shndx = readUInt16();
-                }
+            checkCount(static_cast<int64_t>(symbolCount), 16);
+            symbolTable32.resize(symbolCount);
+            for (auto& sym : symbolTable32) {
+                sym.st_name = readUInt32();
+                sym.st_value = readUInt32();
+                sym.st_size = readUInt32();
+                sym.st_info = readByte();
+                sym.st_other = readByte();
+                sym.st_shndx = readUInt16();
             }
         }
     } catch (...) {
@@ -543,19 +496,32 @@ void Elf::relocationProcessing() {
             }
             if (!relaOffset || !relaSize) return;
             auto count = relaSize / 24;
-            setPosition(mapVATR(relaOffset));
+            auto relaPos = mapVATR(relaOffset);
             bool isX86_64 = (elf64Header.e_machine == ElfConstants::EM_X86_64);
             bool isAArch64 = (elf64Header.e_machine == ElfConstants::EM_AARCH64);
-            for (size_t i = 0; i < count; i++) {
+            for (uint64_t i = 0; i < count; i++) {
+                setPosition(relaPos + i * 24);
                 auto r_offset = readUInt64();
                 auto r_info = readUInt64();
-                auto r_addend = readInt64();
+                auto r_addend = readUInt64();
                 uint32_t type = static_cast<uint32_t>(r_info & 0xffffffff);
+                uint64_t sym = r_info >> 32;
+                uint64_t value;
                 if ((isX86_64 && type == ElfConstants::R_X86_64_RELATIVE) ||
                     (isAArch64 && type == ElfConstants::R_AARCH64_RELATIVE)) {
-                    // Relative relocation - value is imageBase + addend
+                    value = r_addend;
+                } else if ((isX86_64 && type == ElfConstants::R_X86_64_64) ||
+                           (isAArch64 && type == ElfConstants::R_AARCH64_ABS64)) {
+                    if (sym >= symbolTable64.size()) continue;
+                    value = symbolTable64[sym].st_value + r_addend;
+                } else {
+                    continue;
+                }
+                try {
                     setPosition(mapVATR(r_offset));
-                    writeUInt64(imageBase + r_addend);
+                    writeUInt64(value);
+                } catch (const std::out_of_range&) {
+                    // target outside any segment; skip this entry only
                 }
             }
         } else {
@@ -566,9 +532,11 @@ void Elf::relocationProcessing() {
             }
             if (!relOffset || !relSize) return;
             auto count = relSize / 8;
-            setPosition(mapVATR(relOffset));
-            bool isx86 = (elf32Header.e_machine == 3);
-            for (size_t i = 0; i < count; i++) {
+            auto relPos = mapVATR(relOffset);
+            bool isx86 = (elf32Header.e_machine == ElfConstants::EM_386);
+            for (uint32_t i = 0; i < count; i++) {
+                // Re-seek each entry: the write below moves the stream position.
+                setPosition(relPos + static_cast<uint64_t>(i) * 8);
                 auto r_offset = readUInt32();
                 auto r_info = readUInt32();
                 auto type = r_info & 0xff;
@@ -576,8 +544,10 @@ void Elf::relocationProcessing() {
                 if ((isx86 && type == ElfConstants::R_386_32) ||
                     (!isx86 && type == ElfConstants::R_ARM_ABS32)) {
                     if (sym < symbolTable32.size()) {
-                        setPosition(mapVATR(r_offset));
-                        writeUInt32(symbolTable32[sym].st_value);
+                        try {
+                            setPosition(mapVATR(r_offset));
+                            writeUInt32(symbolTable32[sym].st_value);
+                        } catch (const std::out_of_range&) {}
                     }
                 }
             }
@@ -589,20 +559,35 @@ void Elf::relocationProcessing() {
 
 bool Elf::checkProtection() {
     try {
-        if (is64Bit) {
-            for (auto& dyn : dynamicSection64) {
-                if (dyn.d_tag == ElfConstants::DT_INIT) {
-                    LOGI("WARNING: find .init_proc");
-                    return true;
-                }
+        bool found = false;
+        findDynamic(ElfConstants::DT_INIT, found);
+        if (found) {
+            LOGI("WARNING: find .init_proc");
+            return true;
+        }
+        auto strtab = findDynamic(ElfConstants::DT_STRTAB, found);
+        if (found) {
+            auto dynstrOffset = mapVATR(strtab);
+            auto isJniOnLoad = [&](uint32_t nameOffset) {
+                return readStringToNull(dynstrOffset + nameOffset) == "JNI_OnLoad";
+            };
+            bool jni = false;
+            if (is64Bit) {
+                for (auto& sym : symbolTable64) if (isJniOnLoad(sym.st_name)) { jni = true; break; }
+            } else {
+                for (auto& sym : symbolTable32) if (isJniOnLoad(sym.st_name)) { jni = true; break; }
             }
-        } else {
-            for (auto& dyn : dynamicSection32) {
-                if (dyn.d_tag == ElfConstants::DT_INIT) {
-                    LOGI("WARNING: find .init_proc");
-                    return true;
-                }
+            if (jni) {
+                LOGI("WARNING: find JNI_OnLoad");
+                return true;
             }
+        }
+        bool louser = is64Bit
+            ? std::any_of(sectionTable64.begin(), sectionTable64.end(), [](const Elf64_Shdr& x) { return x.sh_type == ElfConstants::SHT_LOUSER; })
+            : std::any_of(sectionTable32.begin(), sectionTable32.end(), [](const Elf32_Shdr& x) { return x.sh_type == ElfConstants::SHT_LOUSER; });
+        if (louser) {
+            LOGI("WARNING: find SHT_LOUSER section");
+            return true;
         }
     } catch (...) {}
     return false;

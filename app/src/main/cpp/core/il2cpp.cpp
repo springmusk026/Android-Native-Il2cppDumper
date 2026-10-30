@@ -2,6 +2,8 @@
 #include "elf.h"
 #include "section_helper.h"
 #include <algorithm>
+#include <memory>
+#include <stdexcept>
 #include <android/log.h>
 
 #define LOG_TAG "Il2CppDumper"
@@ -233,7 +235,27 @@ bool Il2CppEngine::autoPlusInit(uint64_t codeRegistration, uint64_t metadataRegi
 }
 
 void Il2CppEngine::init(uint64_t codeRegistration, uint64_t metadataRegistration) {
-    pCodeRegistration = readClass<Il2CppCodeRegistration>(mapVATR(codeRegistration));
+    // A previous search strategy may have failed mid-init; start clean.
+    methodPointers.clear();
+    genericMethodPointers.clear();
+    invokerPointers.clear();
+    customAttributeGenerators.clear();
+    reversePInvokeWrappers.clear();
+    unresolvedVirtualCallPointers.clear();
+    types.clear();
+    metadataUsages.clear();
+    genericInsts.clear();
+    genericInstPointers.clear();
+    methodSpecs.clear();
+    methodDefinitionMethodSpecs.clear();
+    methodSpecGenericMethodPointers.clear();
+    codeGenModules.clear();
+    codeGenModuleMethodPointers.clear();
+    rgctxsDictionary.clear();
+    fieldOffsets.clear();
+    typeDic.clear();
+
+    pCodeRegistration =readClass<Il2CppCodeRegistration>(mapVATR(codeRegistration));
 
     uint64_t limit = 0x50000;
     if (version == 27 && pCodeRegistration.invokerPointersCount > limit) {
@@ -243,12 +265,22 @@ void Il2CppEngine::init(uint64_t codeRegistration, uint64_t metadataRegistration
     }
 
     if (version == 27.1) {
+        // 27.2 stores a pointer in the RGCTX data slot instead of an index. If every
+        // entry (read with the 27.1 layout) looks like a pointer, upgrade.
         auto pCodeGenModules = readPointerArray(
             mapVATR(pCodeRegistration.codeGenModules), pCodeRegistration.codeGenModulesCount);
         for (auto pCodeGenModule : pCodeGenModules) {
             auto codeGenModule = readClass<Il2CppCodeGenModule>(mapVATR(pCodeGenModule));
             if (codeGenModule.rgctxsCount > 0) {
-                // Check RGCTX entries
+                auto rgctxs = readClassArray<Il2CppRGCTXDefinition>(
+                    mapVATR(codeGenModule.rgctxs), codeGenModule.rgctxsCount);
+                bool allPointers = std::all_of(rgctxs.begin(), rgctxs.end(), [limit](const Il2CppRGCTXDefinition& x) {
+                    return x.data.rgctxDataDummy > static_cast<int64_t>(limit);
+                });
+                if (allPointers) {
+                    version = 27.2;
+                    LOGI("Change il2cpp version to: %.1f", version);
+                }
                 break;
             }
         }
@@ -296,8 +328,7 @@ void Il2CppEngine::init(uint64_t codeRegistration, uint64_t metadataRegistration
         mapVATR(pMetadataRegistration.genericInsts), pMetadataRegistration.genericInstsCount);
     genericInsts.resize(genericInstPointers.size());
     for (size_t i = 0; i < genericInstPointers.size(); i++) {
-        setPosition(mapVATR(genericInstPointers[i]));
-        genericInsts[i].read(*this, version);
+        genericInsts[i] = readClass<Il2CppGenericInst>(mapVATR(genericInstPointers[i]));
     }
 
     fieldOffsetsArePointers = version > 21;
@@ -312,45 +343,19 @@ void Il2CppEngine::init(uint64_t codeRegistration, uint64_t metadataRegistration
     } else {
         auto offsets32 = readPrimitiveArray<uint32_t>(
             mapVATR(pMetadataRegistration.fieldOffsets), pMetadataRegistration.fieldOffsetsCount);
-        fieldOffsets.resize(offsets32.size());
-        for (size_t i = 0; i < offsets32.size(); i++) fieldOffsets[i] = offsets32[i];
+        fieldOffsets.assign(offsets32.begin(), offsets32.end());
     }
 
     auto pTypes = readPointerArray(
         mapVATR(pMetadataRegistration.types), pMetadataRegistration.typesCount);
-    LOGI("CRITICAL: is32Bit=%d, version=%.1f at types read", is32Bit, version);
-    LOGI("pTypes array: addr=0x%llx, count=%lld",
-         (unsigned long long)mapVATR(pMetadataRegistration.types), (long long)pMetadataRegistration.typesCount);
-    if (!pTypes.empty()) {
-        LOGI("  pTypes[0]=0x%llx, pTypes[1]=0x%llx",
-             (unsigned long long)pTypes[0], (unsigned long long)pTypes[1]);
-        auto typeFileOffset = mapVATR(pTypes[0]);
-        LOGI("  pTypes[0] file offset: 0x%llx", (unsigned long long)typeFileOffset);
-        // Read raw bytes at the type location - DIRECT TEST
-        if (typeFileOffset > 0 && typeFileOffset + 12 <= getLength()) {
-            setPosition(typeFileOffset);
-            LOGI("  Position before readUInt64: %llu, data ptr=%p, dataSize=%zu",
-                 (unsigned long long)getPosition(), (void*)getData(), (size_t)getLength());
-            auto rawDp = readUInt64();
-            LOGI("  readUInt64 result: 0x%llx, position after: %llu",
-                 (unsigned long long)rawDp, (unsigned long long)getPosition());
-            auto rawBits = readUInt32();
-            LOGI("  Raw type[0]: datapoint=0x%llx, bits=0x%x", (unsigned long long)rawDp, rawBits);
-
-            // Now test readClass
-            setPosition(typeFileOffset);
-            auto testType = readClass<Il2CppType>();
-            LOGI("  readClass<Il2CppType> result: datapoint=0x%llx, bits=0x%x",
-                 (unsigned long long)testType.datapoint, testType.bits);
-        }
-    }
-    types.resize(pMetadataRegistration.typesCount);
-    for (int64_t i = 0; i < pMetadataRegistration.typesCount; i++) {
+    types.resize(pTypes.size());
+    typeDic.clear();
+    typeDic.reserve(pTypes.size());
+    for (size_t i = 0; i < pTypes.size(); i++) {
         types[i] = readClass<Il2CppType>(mapVATR(pTypes[i]));
         types[i].init(version);
-        typeDic[pTypes[i]] = static_cast<size_t>(i);
+        typeDic[pTypes[i]] = i;
     }
-    LOGI("Types loaded: count=%lld, typeDic.size=%zu", (long long)pMetadataRegistration.typesCount, typeDic.size());
 
     if (version >= 24.2) {
         auto pCodeGenModules = readPointerArray(
@@ -360,13 +365,13 @@ void Il2CppEngine::init(uint64_t codeRegistration, uint64_t metadataRegistration
             auto moduleName = readStringToNull(mapVATR(codeGenModule.moduleName));
             codeGenModules[moduleName] = codeGenModule;
             try {
-                auto methodPointers = readPointerArray(
+                codeGenModuleMethodPointers[moduleName] = readPointerArray(
                     mapVATR(codeGenModule.methodPointers), codeGenModule.methodPointerCount);
-                codeGenModuleMethodPointers[moduleName] = std::move(methodPointers);
-            } catch (...) {
-                codeGenModuleMethodPointers[moduleName].resize(codeGenModule.methodPointerCount, 0);
+            } catch (const std::exception&) {
+                // Matches upstream: unmapped/invalid table -> all-zero pointers.
+                codeGenModuleMethodPointers[moduleName].assign(
+                    static_cast<size_t>(std::max<int64_t>(0, std::min<int64_t>(codeGenModule.methodPointerCount, 0x1000000))), 0);
             }
-            // Build RGCTX dictionary
             std::unordered_map<uint32_t, std::vector<Il2CppRGCTXDefinition>> rgctxDefDic;
             if (codeGenModule.rgctxsCount > 0) {
                 auto rgctxs = readClassArray<Il2CppRGCTXDefinition>(
@@ -374,10 +379,11 @@ void Il2CppEngine::init(uint64_t codeRegistration, uint64_t metadataRegistration
                 auto rgctxRanges = readClassArray<Il2CppTokenRangePair>(
                     mapVATR(codeGenModule.rgctxRanges), codeGenModule.rgctxRangesCount);
                 for (auto& range : rgctxRanges) {
-                    std::vector<Il2CppRGCTXDefinition> defs(
-                        rgctxs.begin() + range.range.start,
-                        rgctxs.begin() + range.range.start + range.range.length);
-                    rgctxDefDic[range.token] = std::move(defs);
+                    auto start = static_cast<int64_t>(range.range.start);
+                    auto length = static_cast<int64_t>(range.range.length);
+                    if (start < 0 || length < 0 || start + length > static_cast<int64_t>(rgctxs.size())) continue;
+                    rgctxDefDic[range.token] = std::vector<Il2CppRGCTXDefinition>(
+                        rgctxs.begin() + start, rgctxs.begin() + start + length);
                 }
             }
             rgctxsDictionary[moduleName] = std::move(rgctxDefDic);
@@ -387,25 +393,22 @@ void Il2CppEngine::init(uint64_t codeRegistration, uint64_t metadataRegistration
             mapVATR(pCodeRegistration.methodPointers), pCodeRegistration.methodPointersCount);
     }
 
-    // Read generic method table
     auto genericMethodTable = readClassArray<Il2CppGenericMethodFunctionsDefinitions>(
         mapVATR(pMetadataRegistration.genericMethodTable), pMetadataRegistration.genericMethodTableCount);
     methodSpecs = readClassArray<Il2CppMethodSpec>(
         mapVATR(pMetadataRegistration.methodSpecs), pMetadataRegistration.methodSpecsCount);
 
     for (auto& table : genericMethodTable) {
+        if (table.genericMethodIndex < 0 || static_cast<size_t>(table.genericMethodIndex) >= methodSpecs.size()) continue;
         auto& methodSpec = methodSpecs[table.genericMethodIndex];
-        auto methodDefIndex = methodSpec.methodDefinitionIndex;
-        methodDefinitionMethodSpecs[methodDefIndex].push_back(methodSpec);
-        // Hash methodSpec for use as key
-        uint64_t hash = static_cast<uint64_t>(methodSpec.methodDefinitionIndex) ^
-                        (static_cast<uint64_t>(methodSpec.classIndexIndex) << 16) ^
-                        (static_cast<uint64_t>(methodSpec.methodIndexIndex) << 32);
-        methodSpecGenericMethodPointers[hash] = genericMethodPointers[table.indices_methodIndex];
+        methodDefinitionMethodSpecs[methodSpec.methodDefinitionIndex].push_back(methodSpec);
+        uint64_t pointer = 0;
+        if (table.indices_methodIndex >= 0 && static_cast<size_t>(table.indices_methodIndex) < genericMethodPointers.size())
+            pointer = genericMethodPointers[table.indices_methodIndex];
+        methodSpecGenericMethodPointers.emplace(methodSpec, pointer);
     }
 
-    LOGI("Il2Cpp initialized: version=%.1f, types=%lld, methods loaded",
-         version, (long long)pMetadataRegistration.typesCount);
+    LOGI("Il2Cpp initialized: version=%.1f, types=%zu", version, types.size());
 }
 
 Il2CppType* Il2CppEngine::getIl2CppType(uint64_t pointer) {
@@ -436,12 +439,14 @@ int Il2CppEngine::getFieldOffsetFromIndex(int typeIndex, int fieldIndexInType, i
     try {
         int offset = -1;
         if (fieldOffsetsArePointers) {
+            if (typeIndex < 0 || static_cast<size_t>(typeIndex) >= fieldOffsets.size()) return -1;
             auto ptr = fieldOffsets[typeIndex];
             if (ptr > 0) {
                 setPosition(mapVATR(ptr) + 4ull * fieldIndexInType);
                 offset = readInt32();
             }
         } else {
+            if (fieldIndex < 0 || static_cast<size_t>(fieldIndex) >= fieldOffsets.size()) return -1;
             offset = static_cast<int>(fieldOffsets[fieldIndex]);
         }
         if (offset > 0) {
@@ -453,6 +458,15 @@ int Il2CppEngine::getFieldOffsetFromIndex(int typeIndex, int fieldIndexInType, i
     } catch (...) {
         return -1;
     }
+}
+
+int32_t Il2CppEngine::getRGCTXDataIndex(const Il2CppRGCTXDefinition& def) {
+    if (version >= 27.2) {
+        // _data points at an Il2CppRGCTXDefinitionData (a single int32 index).
+        setPosition(mapVATR(def._data));
+        return readInt32();
+    }
+    return def.data.rgctxDataDummy;
 }
 
 // --- ElfIl2Cpp ---
@@ -472,53 +486,60 @@ ElfIl2Cpp::~ElfIl2Cpp() {
 }
 
 void ElfIl2Cpp::initElf() {
-    // Check ELF class
+    if (getLength() < 5) throw std::runtime_error("ELF file too small");
     setPosition(4);
-    auto elfClass = readByte();
-    bool actually64 = (elfClass == 2);
-    // CRITICAL: Set BinaryStream::is32Bit so readClass<Il2CppType>() reads correct size
-    is32Bit = !actually64;
+    is32Bit = readByte() != 2; // EI_CLASS: 2 = ELFCLASS64
 
-    // Create ELF parser by re-reading from owned data
-    elfParser = new Elf(ownedData.data(), ownedData.size());
+    // The ELF parser shares this stream's buffer, so relocations it applies are
+    // visible to the Il2Cpp reader.
+    elfParser = new Elf(getDataMutable(), getLength());
     elfParser->version = version;
 }
 
-uint64_t ElfIl2Cpp::mapVATR(uint64_t addr) {
+void ElfIl2Cpp::syncParser() {
     elfParser->version = version;
+    elfParser->isDumped = isDumped;
+    elfParser->imageBase = imageBase;
+}
+
+uint64_t ElfIl2Cpp::mapVATR(uint64_t addr) {
     return elfParser->mapVATR(addr);
 }
 
 uint64_t ElfIl2Cpp::mapRTVA(uint64_t addr) {
-    elfParser->version = version;
     return elfParser->mapRTVA(addr);
 }
 
 bool ElfIl2Cpp::search() {
-    elfParser->version = version;
-    elfParser->isDumped = isDumped;
-    return elfParser->search();
+    syncParser();
+    uint64_t codeRegistration = 0, metadataRegistration = 0;
+    if (!elfParser->search(codeRegistration, metadataRegistration)) return false;
+    init(codeRegistration, metadataRegistration);
+    return true;
 }
 
 bool ElfIl2Cpp::plusSearch(int methodCount, int typeDefinitionsCount, int imageCount) {
-    elfParser->version = version;
-    elfParser->isDumped = isDumped;
-    elfParser->setMetadataUsagesCount(metadataUsagesCount);
-    return elfParser->plusSearch(methodCount, typeDefinitionsCount, imageCount);
+    std::unique_ptr<SectionHelper> helper(getSectionHelper(methodCount, typeDefinitionsCount, imageCount));
+    auto codeRegistration = helper->findCodeRegistration();
+    auto metadataRegistration = helper->findMetadataRegistration();
+    return autoPlusInit(codeRegistration, metadataRegistration);
 }
 
 bool ElfIl2Cpp::symbolSearch() {
-    elfParser->version = version;
-    return elfParser->symbolSearch();
+    syncParser();
+    uint64_t codeRegistration = 0, metadataRegistration = 0;
+    if (!elfParser->symbolSearch(codeRegistration, metadataRegistration)) return false;
+    init(codeRegistration, metadataRegistration);
+    return true;
 }
 
 SectionHelper* ElfIl2Cpp::getSectionHelper(int methodCount, int typeDefinitionsCount, int imageCount) {
-    elfParser->version = version;
+    syncParser();
     return elfParser->getSectionHelper(methodCount, typeDefinitionsCount, imageCount, metadataUsagesCount);
 }
 
 SectionHelper* ElfIl2Cpp::getSectionHelper(int methodCount, int typeDefinitionsCount, int imageCount, int64_t muCount) {
-    elfParser->version = version;
+    syncParser();
     return elfParser->getSectionHelper(methodCount, typeDefinitionsCount, imageCount, muCount);
 }
 
@@ -527,11 +548,20 @@ bool ElfIl2Cpp::checkDump() {
 }
 
 uint64_t ElfIl2Cpp::getRVA(uint64_t pointer) {
+    syncParser();
     return elfParser->getRVA(pointer);
 }
 
 bool ElfIl2Cpp::checkProtection() {
     return elfParser->isProtected;
+}
+
+void ElfIl2Cpp::applyDumpAddress(uint64_t address, bool redirect) {
+    Il2CppEngine::applyDumpAddress(address, redirect);
+    syncParser();
+    if (redirect) {
+        elfParser->reload();
+    }
 }
 
 } // namespace il2cpp_dumper

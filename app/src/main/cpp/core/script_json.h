@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,7 @@ struct ScriptString {
 struct ScriptMetadata {
     uint64_t address = 0;
     std::string name;
-    std::string signature;
+    std::optional<std::string> signature;
 };
 
 struct ScriptMetadataMethod {

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <stdexcept>
+#include <algorithm>
 
 namespace il2cpp_dumper {
 
@@ -85,6 +86,7 @@ public:
 
     template<typename T>
     std::vector<T> readClassArray(int64_t count) {
+        checkCount(count, 1);
         std::vector<T> result(count);
         for (int64_t i = 0; i < count; i++) {
             result[i].read(*this, version);
@@ -105,6 +107,7 @@ public:
     // Read an array of pointer-sized values, respecting is32Bit.
     // Always returns uint64_t vector (widened from uint32_t on 32-bit).
     std::vector<uint64_t> readPointerArray(int64_t count) {
+        checkCount(count, getPointerSize());
         std::vector<uint64_t> result(count);
         if (is32Bit) {
             for (int64_t i = 0; i < count; i++) result[i] = readUInt32();
@@ -121,6 +124,7 @@ public:
 
     template<typename T>
     std::vector<T> readPrimitiveArray(int64_t count) {
+        checkCount(count, sizeof(T));
         std::vector<T> result(count);
         for (int64_t i = 0; i < count; i++) {
             result[i] = readPrimitive<T>();
@@ -134,9 +138,19 @@ public:
         return readPrimitiveArray<T>(count);
     }
 
-private:
 protected:
     std::vector<uint8_t> ownedData;
+
+    // Rejects element counts that cannot fit in the remaining data. Garbage
+    // counts (e.g. from a wrong registration candidate) would otherwise trigger
+    // multi-GB allocations instead of a catchable error.
+    void checkCount(int64_t count, uint64_t elemSize) const {
+        if (count < 0 || static_cast<uint64_t>(count) > (dataSize - std::min<uint64_t>(position, dataSize)) / elemSize) {
+            throw std::out_of_range("array read out of bounds: count=" + std::to_string(count) +
+                                    " pos=" + std::to_string(position));
+        }
+    }
+
 private:
     uint8_t* data = nullptr;
     size_t dataSize = 0;

@@ -142,12 +142,14 @@ struct Il2CppTypeDefinition {
     int32_t customAttributeIndex = 0; // Version <= 24
     int32_t byvalTypeIndex = 0;
     int32_t byrefTypeIndex = 0;       // Version <= 24.5
-    int32_t declaringTypeIndex = 0;
-    int32_t parentIndex = 0;
-    int32_t elementTypeIndex = 0;
+    // -1 defaults so a default-constructed ("not found") definition is not
+    // mistaken for a nested/generic type pointing at index 0.
+    int32_t declaringTypeIndex = -1;
+    int32_t parentIndex = -1;
+    int32_t elementTypeIndex = -1;
     int32_t rgctxStartIndex = 0;      // Version <= 24.1
     int32_t rgctxCount = 0;           // Version <= 24.1
-    int32_t genericContainerIndex = 0;
+    int32_t genericContainerIndex = -1;
     int32_t delegateWrapperFromManagedToNativeIndex = 0; // Version <= 22
     int32_t marshalingFunctionsIndex = 0; // Version <= 22
     int32_t ccwFunctionIndex = 0;     // Version 21-22
@@ -355,9 +357,9 @@ struct Il2CppRGCTXDefinitionData {
 struct Il2CppRGCTXDefinition {
     Il2CppRGCTXDataType type{};
     int32_t type_pre29 = 0;       // Version <= 27.1
-    uint64_t type_post29 = 0;     // Version >= 29
+    uint64_t type_post29 = 0;     // Version >= 27.2 (pointer-sized, padded enum)
     Il2CppRGCTXDefinitionData data{}; // Version <= 27.1
-    uint64_t _data = 0;           // Version >= 27.2
+    uint64_t _data = 0;           // Version >= 27.2: pointer to Il2CppRGCTXDefinitionData
 
     Il2CppRGCTXDataType getType() const {
         if (type_post29 == 0)

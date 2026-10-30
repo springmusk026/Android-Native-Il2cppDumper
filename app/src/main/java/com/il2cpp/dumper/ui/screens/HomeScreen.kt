@@ -111,14 +111,14 @@ fun HomeScreen(
             onValueChange = {
                 dumpAddrText = it
                 val cleaned = it.trim().removePrefix("0x").removePrefix("0X")
-                val addr = cleaned.toLongOrNull(16) ?: 0L
+                val addr = cleaned.toULongOrNull(16)?.toLong() ?: 0L
                 viewModel.setDumpAddress(addr)
             },
             label = { Text("Dump Address (optional)") },
             placeholder = { Text("0x0 (leave empty for auto-detect)") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
             supportingText = { Text("For dump files: enter the image base address in hex") }
         )
 

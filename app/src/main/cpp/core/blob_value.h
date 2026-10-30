@@ -58,10 +58,11 @@ enum class Il2CppRGCTXDataType {
 
 struct BlobValue {
     Il2CppTypeEnum il2cppTypeEnum = Il2CppTypeEnum::IL2CPP_TYPE_END;
-    // Variant: bool, int8_t, uint8_t, char16_t, int16_t, uint16_t, int32_t, uint32_t,
-    //          int64_t, uint64_t, float, double, std::string, nullptr_t, or index (uint64_t)
+    // Scalar payload. std::nullptr_t means a null string/array/type, monostate
+    // means "no scalar" (e.g. a non-null SZARRAY whose elements are in `array`).
+    // IL2CPP_TYPE_IL2CPP_TYPE_INDEX stores the type index as int32_t.
     using ValueVariant = std::variant<
-        std::monostate,    // null/unset
+        std::monostate,
         bool,
         int8_t, uint8_t,
         char16_t,
@@ -73,7 +74,10 @@ struct BlobValue {
         std::nullptr_t
     >;
     ValueVariant value{};
-    Il2CppTypeEnum enumType = Il2CppTypeEnum::IL2CPP_TYPE_END;
+    std::vector<BlobValue> array;   // IL2CPP_TYPE_SZARRAY elements
+    int64_t enumTypeIndex = -1;     // index into il2Cpp.types when the value is an enum
+
+    bool isNull() const { return std::holds_alternative<std::nullptr_t>(value); }
 };
 
 } // namespace il2cpp_dumper

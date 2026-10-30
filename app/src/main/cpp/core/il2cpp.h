@@ -32,6 +32,13 @@ public:
     virtual bool checkDump() = 0;
     virtual uint64_t getRVA(uint64_t pointer) = 0;
     virtual bool checkProtection() { return false; }
+    // Marks the binary as a memory dump loaded at `address`. When `redirect` is
+    // true the format parser rebuilds its segment/dynamic tables for that base.
+    virtual void applyDumpAddress(uint64_t address, bool redirect) {
+        imageBase = address;
+        isDumped = true;
+        (void)redirect;
+    }
 
     // Common Il2Cpp operations
     void setProperties(double version, int64_t metadataUsagesCount);
@@ -43,6 +50,8 @@ public:
     uint64_t getMethodPointer(const std::string& imageName, const Il2CppMethodDefinition& methodDef);
     int getFieldOffsetFromIndex(int typeIndex, int fieldIndexInType, int fieldIndex,
                                  bool isValueType, bool isStatic);
+    // Index stored in an RGCTX entry (type index or method spec index).
+    int32_t getRGCTXDataIndex(const Il2CppRGCTXDefinition& def);
 
     size_t getTypeIndex(uint64_t addr) const {
         auto it = typeDic.find(addr);
@@ -62,7 +71,7 @@ public:
     std::vector<uint64_t> genericInstPointers;
     std::vector<Il2CppMethodSpec> methodSpecs;
     std::unordered_map<int, std::vector<Il2CppMethodSpec>> methodDefinitionMethodSpecs;
-    std::unordered_map<uint64_t, uint64_t> methodSpecGenericMethodPointers; // methodSpec hash -> pointer
+    std::unordered_map<Il2CppMethodSpec, uint64_t, Il2CppMethodSpecHash> methodSpecGenericMethodPointers;
     std::unordered_map<std::string, Il2CppCodeGenModule> codeGenModules;
     std::unordered_map<std::string, std::vector<uint64_t>> codeGenModuleMethodPointers;
     std::unordered_map<std::string, std::unordered_map<uint32_t, std::vector<Il2CppRGCTXDefinition>>> rgctxsDictionary;
@@ -95,10 +104,12 @@ public:
     bool checkDump() override;
     uint64_t getRVA(uint64_t pointer) override;
     bool checkProtection() override;
+    void applyDumpAddress(uint64_t address, bool redirect) override;
 
 private:
     ElfBase* elfParser = nullptr;
     void initElf();
+    void syncParser();
 };
 
 } // namespace il2cpp_dumper

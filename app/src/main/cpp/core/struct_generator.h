@@ -26,22 +26,31 @@ private:
     std::unordered_set<std::string> structNameHashSet;
     std::vector<StructInfo> structInfoList;
     std::unordered_map<std::string, StructInfo*> structInfoWithStructName;
-    std::unordered_set<size_t> structCache;
+    std::unordered_set<const StructInfo*> structCache;
     std::unordered_map<int, std::string> structNameDic;
-    std::unordered_map<uint64_t, int> typeIdentityToIndex; // (nameIndex<<32|namespaceIndex) -> typeDefIndex
     std::unordered_map<uint64_t, std::string> genericClassStructNameDic;
+    std::unordered_map<std::string, const Il2CppType*> nameGenericClassDic;
     std::vector<uint64_t> genericClassList;
+    std::unordered_set<uint64_t> methodInfoCache;
     std::ostringstream arrayClassHeader;
     std::ostringstream methodInfoHeader;
 
     static const std::unordered_set<std::string> keywords;
     static const std::unordered_set<std::string> specialKeywords;
 
-    std::string fixName(const std::string& str);
+    static std::string fixName(const std::string& str);
     std::string parseType(const Il2CppType& il2CppType, const Il2CppGenericContext* context = nullptr);
     std::string getIl2CppStructName(const Il2CppType& il2CppType, const Il2CppGenericContext* context = nullptr);
-    bool isValueType(const Il2CppType& il2CppType, const Il2CppGenericContext* context = nullptr);
-    bool isCustomType(const Il2CppType& il2CppType, const Il2CppGenericContext* context = nullptr);
+    bool isValueType(const Il2CppType& il2CppType, const Il2CppGenericContext* context);
+    bool isCustomType(const Il2CppType& il2CppType, const Il2CppGenericContext* context);
+
+    const Il2CppType& typeAt(int64_t index) const;
+    const Il2CppType& typeFromPointer(uint64_t pointer);
+    const Il2CppType& genericArgument(const Il2CppType& il2CppType, uint64_t genericInstPointer);
+    const Il2CppTypeDefinition& genericClassTypeDefinition(uint64_t genericClassPointer, Il2CppGenericClass* out = nullptr);
+    int typeDefIndexOf(const Il2CppTypeDefinition& typeDef) const;
+    const std::string& structNameOf(const Il2CppTypeDefinition& typeDef) const;
+    const Il2CppTypeDefinition& getTypeDefinition(const Il2CppType& il2CppType);
 
     void createStructNameDic(const Il2CppTypeDefinition& typeDef, int typeDefIndex);
     std::string getUniqueName(const std::string& name);
@@ -50,16 +59,15 @@ private:
     void addParents(const Il2CppTypeDefinition& typeDef, StructInfo& info);
     void addFields(const Il2CppTypeDefinition& typeDef, StructInfo& info, const Il2CppGenericContext* context);
     void addVTableMethod(StructInfo& info, const Il2CppTypeDefinition& typeDef);
-    void addRGCTX(StructInfo& info, const Il2CppTypeDefinition& typeDef);
+    void addRGCTX(StructInfo& info, int typeDefIndex);
+    std::vector<StructRGCTXInfo> buildRGCTX(const std::vector<Il2CppRGCTXDefinition>* collection);
     void parseArrayClassStruct(const Il2CppType& il2CppType, const Il2CppGenericContext* context);
-    std::string recursionStructInfo(StructInfo& info);
-    void recursionStructInfoToStream(StructInfo& info, std::ostream& out);
-    void generateMethodInfo(const std::string& name, const std::string& typeName,
+    void recursionStructInfo(const StructInfo& info, std::string& out);
+    void generateMethodInfo(const std::string& methodInfoName, const std::string& structTypeName,
                             const std::vector<StructRGCTXInfo>& rgctxs);
     std::vector<StructRGCTXInfo> generateRGCTX(const std::string& imageName,
                                                  const Il2CppMethodDefinition& methodDef);
 
-    // Metadata usage helpers
     void addMetadataUsageTypeInfo(ScriptJson& json, uint32_t index, uint64_t address);
     void addMetadataUsageIl2CppType(ScriptJson& json, uint32_t index, uint64_t address);
     void addMetadataUsageMethodDef(ScriptJson& json, uint32_t index, uint64_t address);

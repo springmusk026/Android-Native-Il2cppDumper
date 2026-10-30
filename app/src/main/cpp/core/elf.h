@@ -21,9 +21,9 @@ public:
 
     virtual uint64_t mapVATR(uint64_t addr) = 0;
     virtual uint64_t mapRTVA(uint64_t addr) = 0;
-    virtual bool search() = 0;
-    virtual bool plusSearch(int methodCount, int typeDefinitionsCount, int imageCount) = 0;
-    virtual bool symbolSearch() = 0;
+    // Locate CodeRegistration/MetadataRegistration; the caller initializes the engine.
+    virtual bool search(uint64_t& codeRegistration, uint64_t& metadataRegistration) = 0;
+    virtual bool symbolSearch(uint64_t& codeRegistration, uint64_t& metadataRegistration) = 0;
     virtual SectionHelper* getSectionHelper(int methodCount, int typeDefinitionsCount, int imageCount, int64_t metadataUsagesCount = 0) = 0;
     virtual bool checkDump() = 0;
     virtual uint64_t getRVA(uint64_t pointer) = 0;
@@ -31,7 +31,6 @@ public:
     bool isDumped = false;
     bool isProtected = false;
     void reload() { load(); }
-    virtual void setMetadataUsagesCount(int64_t) {}
 
 protected:
     virtual void load() = 0;
@@ -46,13 +45,11 @@ public:
 
     uint64_t mapVATR(uint64_t addr) override;
     uint64_t mapRTVA(uint64_t addr) override;
-    bool search() override;
-    bool plusSearch(int methodCount, int typeDefinitionsCount, int imageCount) override;
-    bool symbolSearch() override;
+    bool search(uint64_t& codeRegistration, uint64_t& metadataRegistration) override;
+    bool symbolSearch(uint64_t& codeRegistration, uint64_t& metadataRegistration) override;
     SectionHelper* getSectionHelper(int methodCount, int typeDefinitionsCount, int imageCount, int64_t metadataUsagesCount = 0) override;
     bool checkDump() override;
     uint64_t getRVA(uint64_t pointer) override;
-    void setMetadataUsagesCount(int64_t count) override { storedMetadataUsagesCount = count; }
 
 protected:
     void load() override;
@@ -60,7 +57,6 @@ protected:
 
 private:
     bool is64Bit = false;
-    int64_t storedMetadataUsagesCount = 0;
 
     // 32-bit structures
     Elf32_Ehdr elf32Header{};
@@ -79,6 +75,7 @@ private:
     Elf64_Phdr* pt_dynamic64 = nullptr;
 
     void readSymbol();
+    uint64_t findDynamic(int64_t tag, bool& found) const;
     void relocationProcessing();
     bool checkProtection();
     void fixedProgramSegment();

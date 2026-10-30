@@ -167,7 +167,7 @@ class DumperViewModel(
 
                 val isDump = withContext(Dispatchers.IO) { NativeDumper.nativeIsDumpFile() }
                 _isDumpFile.value = isDump
-                if (isDump) {
+                if (isDump || _config.value.forceDump) {
                     val addr = _dumpAddress.value
                     if (addr != null && addr != 0L) {
                         withContext(Dispatchers.IO) { NativeDumper.nativeSetDumpAddress(addr) }
@@ -186,6 +186,7 @@ class DumperViewModel(
                     failJob("Failed to find registration structures", startTime, metaFileName, il2FileName, metaHash, il2Hash, metaFile.length(), il2File.length())
                     return@launch
                 }
+                val il2cppVersionStr = NativeDumper.nativeGetIl2CppVersion()
 
                 _state.value = DumpState.Dumping
 
@@ -217,7 +218,7 @@ class DumperViewModel(
                         logs = _logs.value,
                         durationMs = duration,
                         metadataVersion = parseVersion(versionStr),
-                        il2cppVersion = versionStr,
+                        il2cppVersion = il2cppVersionStr,
                         outputFileNames = outputFiles
                     )
                     repository.updateJob(entity)

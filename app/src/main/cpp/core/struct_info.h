@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 #include "blob_value.h"
@@ -31,7 +32,7 @@ struct StructInfo {
     std::string parent;
     std::vector<StructFieldInfo> fields;
     std::vector<StructFieldInfo> staticFields;
-    std::vector<StructVTableMethodInfo> vTableMethod;
+    std::vector<std::optional<StructVTableMethodInfo>> vTableMethod;
     std::vector<StructRGCTXInfo> rgctxs;
 };
 

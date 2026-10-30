@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -23,6 +24,11 @@ private:
                                     int customAttributeIndex, uint32_t token,
                                     const std::string& padding = "");
     std::string getModifiers(const Il2CppMethodDefinition& methodDef);
+    void dumpType(std::ostream& writer, const Config& config, const Il2CppImageDefinition& imageDef,
+                  const std::string& imageName, int typeDefIndex);
+    void writeGenericInstMethods(std::ostream& writer, const std::vector<Il2CppMethodSpec>& methodSpecs);
+    std::string formatDefaultValue(int typeIndex, int dataIndex);
+    std::string formatPointer(uint64_t pointer);
 };
 
 } // namespace il2cpp_dumper

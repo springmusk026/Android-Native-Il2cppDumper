@@ -297,9 +297,11 @@ void Il2CppEventDefinition::read(BinaryStream& stream, double version) {
 }
 
 void Il2CppRGCTXDefinition::read(BinaryStream& stream, double version) {
-    if (version >= 29) {
-        type_post29 = stream.readUInt64();
-        _data = stream.readUInt64();
+    if (version >= 27.2) {
+        // { Il2CppRGCTXDataType type; const void* data; } - the enum is padded
+        // to pointer size, so both members are pointer-sized (4 bytes on 32-bit).
+        type_post29 = stream.readUIntPtr();
+        _data = stream.readUIntPtr();
     } else {
         type_pre29 = stream.readInt32();
         data.rgctxDataDummy = stream.readInt32();
@@ -424,7 +426,9 @@ int Metadata::sizeOfStruct<Il2CppGenericParameter>() const { return 16; }
 
 template<>
 int Metadata::sizeOfStruct<Il2CppRGCTXDefinition>() const {
-    if (version >= 29) return 16;
+    // Only read from metadata for version <= 24.1 (8 bytes); later versions
+    // live in the binary and are pointer-sized.
+    if (version >= 27.2) return 16;
     return 8;
 }
 
@@ -536,11 +540,13 @@ void Metadata::initialize() {
         for (size_t i = 0; i < imageDefs.size(); i++) {
             std::unordered_map<uint32_t, int> dic;
             auto end = imageDefs[i].customAttributeStart + imageDefs[i].customAttributeCount;
-            for (int j = imageDefs[i].customAttributeStart; j < end; j++) {
+            for (int j = imageDefs[i].customAttributeStart; j < static_cast<int>(end); j++) {
                 if (version >= 29) {
-                    dic[attributeDataRanges[j].token] = j;
+                    if (static_cast<size_t>(j) < attributeDataRanges.size())
+                        dic[attributeDataRanges[j].token] = j;
                 } else {
-                    dic[attributeTypeRanges[j].token] = j;
+                    if (static_cast<size_t>(j) < attributeTypeRanges.size())
+                        dic[attributeTypeRanges[j].token] = j;
                 }
             }
             attributeTypeRangesDic[static_cast<int>(i)] = std::move(dic);
@@ -587,7 +593,16 @@ std::string Metadata::getStringFromIndex(uint32_t index) {
 
 int Metadata::getCustomAttributeIndex(const Il2CppImageDefinition& imageDef, int customAttributeIndex, uint32_t token) const {
     if (version > 24) {
-        auto imgIt = attributeTypeRangesDic.find(imageDef.assemblyIndex);
+        // The dictionary is keyed by position in imageDefs (assemblyIndex does
+        // not necessarily equal the image index).
+        auto imageIndex = static_cast<int>(&imageDef - imageDefs.data());
+        if (imageIndex < 0 || static_cast<size_t>(imageIndex) >= imageDefs.size()) {
+            imageIndex = -1;
+            for (size_t i = 0; i < imageDefs.size(); i++) {
+                if (imageDefs[i].nameIndex == imageDef.nameIndex) { imageIndex = static_cast<int>(i); break; }
+            }
+        }
+        auto imgIt = attributeTypeRangesDic.find(imageIndex);
         if (imgIt != attributeTypeRangesDic.end()) {
             auto it = imgIt->second.find(token);
             if (it != imgIt->second.end()) return it->second;
@@ -598,6 +613,7 @@ int Metadata::getCustomAttributeIndex(const Il2CppImageDefinition& imageDef, int
 }
 
 std::string Metadata::getStringLiteralFromIndex(uint32_t index) {
+    if (index >= stringLiterals.size()) return "";
     auto& sl = stringLiterals[index];
     setPosition(header.stringLiteralDataOffset + sl.dataIndex);
     auto bytes = readBytes(static_cast<int>(sl.length));
