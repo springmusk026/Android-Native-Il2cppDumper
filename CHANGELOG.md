@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.4.0] - 2026-10-30
+
+### Redesigned UI
+- New design system: one spacing scale, one card style, a small palette where each color means something (accent = the dump and its primary action, green = running, amber = needs attention, red = failed), light and dark variants; wallpaper-based dynamic color removed
+- Dump screen built around a status card that always says what is happening: files needed, ready, running (stage track Load → Init → Search → Dump with elapsed time), finished (duration, type/method counts) or failed (with the reason)
+- Picked files show their real name and size; dump options are compact toggles with advanced options folded away; image-base field warns when a memory dump is detected
+- Floating Dump / History switcher; About moved behind the info button
+- History rows show state, time and Il2Cpp version / file count / duration; interrupted runs are labeled instead of "running" forever
+- Job detail leads with the outcome: output files with sizes and save/share, or the failure with copy-debug-info and report actions; options shown in plain words; deleting asks first
+- Fixed the purple status bar flash at launch; log lines from the native thread no longer get lost
+
 ## [1.3.0] - 2026-10-30
 
 Logic fixes from a line-by-line comparison with upstream Perfare/Il2CppDumper.
