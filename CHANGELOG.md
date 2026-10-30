@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.0] - 2026-10-30
 
 Logic fixes from a line-by-line comparison with upstream Perfare/Il2CppDumper.
 
